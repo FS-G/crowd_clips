@@ -14,7 +14,8 @@ bride_and_groom_crowd_shots/
 └── utils/
     ├── __init__.py
     ├── ceremony_detector.py  # Video classification logic
-    └── video_validator.py     # Video validation and filtering
+    ├── video_validator.py     # Video validation and filtering
+    └── crowd_clip_exporter.py # Clip export functionality
 ```
 
 ## Features
@@ -23,6 +24,7 @@ bride_and_groom_crowd_shots/
 - **Recursive Directory Scanning**: Searches through nested subdirectories
 - **Ceremony Detection**: Uses ML model to classify videos as ceremony, dance, or other
 - **Batch Processing**: Processes multiple input folders sequentially
+- **Clip Export**: Exports random clips from ceremony videos with specified duration and resolution
 - **Comprehensive Logging**: Detailed progress and results reporting
 
 ## Configuration
@@ -52,7 +54,8 @@ Edit `parameters.json` to configure:
 2. **Directory Scanning**: Recursively scans each input folder for video files
 3. **Video Validation**: Filters videos by duration (≥10 minutes)
 4. **Ceremony Detection**: Analyzes each valid video using the ML model
-5. **Results Collection**: Returns list of videos classified as ceremony
+5. **Clip Export**: Exports random clips from ceremony videos with specified settings
+6. **Results Collection**: Returns list of videos classified as ceremony
 
 ## Supported Video Formats
 
