@@ -1,0 +1,12 @@
+{
+    "in_folders": [
+      "D:\\projects\\aminadav\\updated_code\\Q\\ppmaker\\out\\_+DORH+_Lilach_Almog"
+    ],
+    "output_path": "D:\\projects\\output_videos",
+    "export_settings": {
+      "resolution": "1920x1080",
+      "skip_frame_rate": 5,
+      "duration_needed_seconds": 5
+    }
+  }
+  
