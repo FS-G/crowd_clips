@@ -112,6 +112,7 @@ class VideoValidator:
                 valid_videos.append(video_path)
                 print(f"Valid video found: {video_path}")
             else:
-                print(f"Skipping invalid video: {video_path}")
+                # print(f"Skipping invalid video: {video_path}")
+                pass
         
         return valid_videos
