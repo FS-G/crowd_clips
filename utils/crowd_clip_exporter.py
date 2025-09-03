@@ -1,11 +1,15 @@
 import os
-import random
+import numpy as np
 from pathlib import Path
 from moviepy import VideoFileClip
+from tensorflow.keras import layers, models
+from PIL import Image
 
+
+MODEL_PATH = "models/crowd_classification.weights.h5"
 
 class CrowdClipExporter:
-    def __init__(self, output_path, resolution="1920x1080", duration_seconds=5):
+    def __init__(self, output_path, resolution="1920x1080", duration_seconds=5, skip_frame_rate=5):
         """
         Initialize the CrowdClipExporter class.
         
@@ -13,10 +17,23 @@ class CrowdClipExporter:
             output_path (str): Directory path where clips will be exported
             resolution (str): Output resolution in format "widthxheight" (default: "1920x1080")
             duration_seconds (int): Duration of each clip in seconds (default: 5)
+            skip_frame_rate (int): Number of frames to skip between analysis (default: 5)
         """
         self.output_path = output_path
         self.resolution = resolution
         self.duration_seconds = duration_seconds
+        self.skip_frame_rate = skip_frame_rate
+        
+        # Crowd detection model settings
+        self.crowd_model_path = MODEL_PATH
+        self.img_size = (224, 224)
+        self.num_classes = 2
+        self.class_labels = {0: "non_crowd", 1: "crowd"}
+        self.input_shape = (*self.img_size, 3)
+        self.consecutive_crowd_frames = 5  # Number of consecutive crowd frames needed
+        
+        # Load crowd detection model
+        self.crowd_model = self._load_crowd_model()
         
         # Parse resolution
         try:
@@ -41,34 +58,53 @@ class CrowdClipExporter:
         
         print(f"Resolution: {self.resolution}")
         print(f"Clip duration: {self.duration_seconds} seconds")
+        print(f"Skip frame rate: {self.skip_frame_rate}")
+        print(f"Consecutive crowd frames needed: {self.consecutive_crowd_frames}")
     
-    def _get_random_start_time(self, video_duration):
-        """
-        Get a random start time that ensures the clip doesn't start at the beginning or end.
+    def _create_crowd_cnn_model(self):
+        """Create the CNN model structure for crowd detection."""
+        model = models.Sequential([
+            layers.Conv2D(32, (3, 3), activation="relu", input_shape=self.input_shape),
+            layers.MaxPooling2D((2, 2)),
+            layers.Conv2D(64, (3, 3), activation="relu"),
+            layers.MaxPooling2D((2, 2)),
+            layers.Conv2D(128, (3, 3), activation="relu"),
+            layers.MaxPooling2D((2, 2)),
+            layers.Flatten(),
+            layers.Dense(128, activation="relu"),
+            layers.Dense(self.num_classes, activation="softmax"),
+        ])
+        model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
+        return model
+    
+    def _load_crowd_model(self):
+        """Load the crowd detection model with weights."""
+        try:
+            model = self._create_crowd_cnn_model()
+            model.load_weights(self.crowd_model_path)
+            print(f"✓ Crowd detection model loaded successfully from '{self.crowd_model_path}'")
+            return model
+        except Exception as e:
+            print(f"✗ Error loading crowd detection model: {e}")
+            print("⚠ Crowd detection will be disabled")
+            return None
+    
+    def _predict_crowd_frame(self, frame):
+        """Predict if a single frame contains crowd."""
+        if self.crowd_model is None:
+            return "non_crowd", {"non_crowd": 0.5, "crowd": 0.5}
         
-        Args:
-            video_duration (float): Total duration of the video in seconds
-            
-        Returns:
-            float: Random start time in seconds
-        """
-        # Ensure we have enough time for the clip
-        if video_duration <= self.duration_seconds:
-            return 0
+        frame_array = frame / 255.0
+        frame_array = np.expand_dims(frame_array, axis=0)
         
-        # Calculate the maximum start time to ensure we don't go beyond video end
-        max_start_time = video_duration - self.duration_seconds
+        pred = self.crowd_model.predict(frame_array, verbose=0)[0]
+        predicted_class = np.argmax(pred)
+        confidence_scores = {self.class_labels[i]: prob for i, prob in enumerate(pred)}
+        predicted_label = self.class_labels.get(predicted_class, "non_crowd")
         
-        # Start from 10% of video duration to avoid beginning
-        min_start_time = video_duration * 0.1
-        
-        # End at 90% of video duration to avoid ending
-        max_start_time = min(max_start_time, video_duration * 0.9)
-        
-        # Generate random start time between min and max
-        start_time = random.uniform(min_start_time, max_start_time)
-        
-        return start_time
+        return predicted_label, confidence_scores
+    
+
     
     def _generate_output_filename(self, video_path, start_time):
         """
@@ -93,9 +129,86 @@ class CrowdClipExporter:
         
         return output_filename
     
+    def _find_crowd_segments(self, video_path):
+        """
+        Find segments in the video that contain consecutive crowd frames.
+        
+        Args:
+            video_path (str): Path to the video file
+            
+        Returns:
+            list: List of tuples (start_time, end_time) for crowd segments
+        """
+        if self.crowd_model is None:
+            print("  ⚠ Crowd detection model not available, using random clip")
+            return []
+        
+        try:
+            print(f"  Analyzing video for crowd segments...")
+            
+            with VideoFileClip(video_path) as clip:
+                video_duration = clip.duration
+                fps = clip.fps
+                
+                # Calculate frame timestamps based on skip_frame_rate
+                frame_interval = self.skip_frame_rate / fps
+                timestamps = np.arange(0, video_duration, frame_interval)
+                
+                print(f"    Video duration: {video_duration:.2f}s, FPS: {fps:.2f}")
+                print(f"    Analyzing {len(timestamps)} frames (every {self.skip_frame_rate} frames)")
+                
+                crowd_segments = []
+                consecutive_crowd_count = 0
+                crowd_start_time = None
+                
+                for i, timestamp in enumerate(timestamps):
+                    try:
+                        # Extract frame
+                        frame = clip.get_frame(timestamp)
+                        frame = Image.fromarray(frame).convert("RGB").resize(self.img_size)
+                        
+                        # Predict crowd
+                        label, confidences = self._predict_crowd_frame(np.array(frame))
+                        
+                        if i % 10 == 0:  # Print every 10th frame to avoid spam
+                            print(f"    Frame {i+1}/{len(timestamps)} at {timestamp:.2f}s: {label} ({confidences['crowd']:.2f})")
+                        
+                        # Check for consecutive crowd frames
+                        if label == "crowd":
+                            if crowd_start_time is None:
+                                crowd_start_time = timestamp
+                            consecutive_crowd_count += 1
+                        else:
+                            # Reset if we have enough consecutive crowd frames
+                            if consecutive_crowd_count >= self.consecutive_crowd_frames:
+                                end_time = min(timestamp, video_duration)
+                                crowd_segments.append((crowd_start_time, end_time))
+                                print(f"    ✓ Found crowd segment: {crowd_start_time:.2f}s - {end_time:.2f}s")
+                            
+                            # Reset counters
+                            consecutive_crowd_count = 0
+                            crowd_start_time = None
+                    
+                    except Exception as e:
+                        print(f"    ⚠ Error processing frame at {timestamp:.2f}s: {e}")
+                        continue
+                
+                # Check if we have a crowd segment at the end
+                if consecutive_crowd_count >= self.consecutive_crowd_frames:
+                    end_time = video_duration
+                    crowd_segments.append((crowd_start_time, end_time))
+                    print(f"    ✓ Found crowd segment: {crowd_start_time:.2f}s - {end_time:.2f}s")
+                
+                print(f"    Found {len(crowd_segments)} crowd segments")
+                return crowd_segments
+                
+        except Exception as e:
+            print(f"  ✗ Error analyzing video for crowd segments: {e}")
+            return []
+    
     def export_clip_from_video(self, video_path):
         """
-        Export a random clip from a single video.
+        Export a clip from a video based on crowd detection or random selection.
         
         Args:
             video_path (str): Path to the input video file
@@ -116,11 +229,29 @@ class CrowdClipExporter:
                     print(f"  Warning: Video too short ({video_duration:.2f}s < {self.duration_seconds}s), skipping...")
                     return None
                 
-                # Get random start time
-                start_time = self._get_random_start_time(video_duration)
-                end_time = start_time + self.duration_seconds
+                # Find crowd segments
+                crowd_segments = self._find_crowd_segments(video_path)
                 
-                print(f"  Extracting clip from {start_time:.2f}s to {end_time:.2f}s")
+                if crowd_segments:
+                    # Use the first crowd segment
+                    start_time, end_time = crowd_segments[0]
+                    
+                    # Ensure the segment is long enough
+                    segment_duration = end_time - start_time
+                    if segment_duration < self.duration_seconds:
+                        # Extend the segment if possible
+                        if end_time + (self.duration_seconds - segment_duration) <= video_duration:
+                            end_time = start_time + self.duration_seconds
+                        else:
+                            # Adjust start time to fit duration
+                            start_time = max(0, end_time - self.duration_seconds)
+                    
+                    print(f"  ✓ Using crowd segment: {start_time:.2f}s - {end_time:.2f}s")
+                else:
+                    # Fallback to center-based selection
+                    start_time = max(0, (video_duration - self.duration_seconds) / 2)
+                    end_time = start_time + self.duration_seconds
+                    print(f"  ⚠ No crowd segments found, using center clip: {start_time:.2f}s - {end_time:.2f}s")
                 
                 # Extract subclip
                 subclip = clip.subclipped(start_time, end_time)

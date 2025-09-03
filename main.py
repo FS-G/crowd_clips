@@ -51,10 +51,12 @@ def process_videos():
     # Initialize clip exporter
     resolution = export_settings.get("resolution", "1920x1080")
     duration_needed_seconds = export_settings.get("duration_needed_seconds", 5)
+    skip_frame_rate = export_settings.get("skip_frame_rate", 5)
     clip_exporter = CrowdClipExporter(
         output_path=output_path,
         resolution=resolution,
-        duration_seconds=duration_needed_seconds
+        duration_seconds=duration_needed_seconds,
+        skip_frame_rate=skip_frame_rate
     )
     
     # Test the clip exporter with a sample video if available
