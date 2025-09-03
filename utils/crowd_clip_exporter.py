@@ -28,7 +28,7 @@ class CrowdClipExporter:
         self.crowd_model_path = MODEL_PATH
         self.img_size = (224, 224)
         self.num_classes = 2
-        self.class_labels = {0: "non_crowd", 1: "crowd"}
+        self.class_labels = {0: "crowd", 1: "non_crowd"}
         self.input_shape = (*self.img_size, 3)
         self.consecutive_crowd_frames = 5  # Number of consecutive crowd frames needed
         
